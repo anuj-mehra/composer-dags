@@ -1,0 +1,60 @@
+
+from airflow import DAG
+from airflow.operators.dummy import DummyOperator
+from airflow.utils.task_group import TaskGroup
+from airflow.utils.dates import days_ago
+
+# ✅ This function is imported by parent_dag.py
+def create_dag2_group(dag: DAG) -> TaskGroup:
+    with TaskGroup("DAG2", tooltip="DAG 2 Tasks", dag=dag) as dag2_group:
+        t3 = DummyOperator(task_id="task3", dag=dag)
+        t4 = DummyOperator(task_id="task4", dag=dag)
+        t3 >> t4
+    return dag2_group
+
+# ✅ If this file is loaded directly by Airflow, it creates a standalone DAG
+if __name__ != "__main__":
+    dag = DAG(
+        dag_id="dag2",  # This will show up as a separate DAG if not removed
+        start_date=days_ago(1),
+        schedule_interval=None,
+        catchup=False,
+        tags=["standalone"],
+    )
+
+    with dag:
+        create_dag2_group(dag)
+
+
+
+
+
+
+parent_dag.py
+
+from airflow import DAG
+from airflow.utils.dates import days_ago
+from airflow.operators.dummy import DummyOperator
+from dag1_group import create_dag1_group
+from dag2_group import create_dag2_group
+from dag3_group import create_dag3_group
+
+with DAG(
+    dag_id="parent_dag",
+    start_date=days_ago(1),
+    schedule_interval=None,
+    catchup=False,
+    tags=["project"],
+) as dag:
+
+    start = DummyOperator(task_id="start")
+    end = DummyOperator(task_id="end")
+
+    dag1 = create_dag1_group(dag)
+    dag2 = create_dag2_group(dag)
+    dag3 = create_dag3_group(dag)
+
+    start >> dag1 >> dag2 >> dag3 >> end
+
+
+
