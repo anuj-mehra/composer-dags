@@ -1,0 +1,94 @@
+import com.google.cloud.bigquery.*;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
+import org.apache.beam.sdk.options.PipelineOptionsFactory;
+import org.apache.beam.sdk.transforms.MapElements;
+import org.apache.beam.sdk.transforms.SimpleFunction;
+import org.apache.beam.sdk.values.PCollection;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import java.util.Map;
+import java.util.UUID;
+
+import static org.junit.Assert.*;
+
+public class BigQueryIntegrationTest {
+
+    private static final String PROJECT_ID = "your-project-id";
+    private static final String DATASET = "test_dataset";
+    private static final String TABLE = "test_table_" + UUID.randomUUID().toString().replace("-", "_");
+    private static final String FULL_TABLE_NAME = String.format("%s.%s.%s", PROJECT_ID, DATASET, TABLE);
+
+    @BeforeClass
+    public static void setupBigQueryData() throws InterruptedException {
+        BigQuery bigquery = BigQueryOptions.getDefaultInstance().getService();
+
+        // Create schema and table
+        Schema schema = Schema.of(
+                Field.of("name", StandardSQLTypeName.STRING),
+                Field.of("age", StandardSQLTypeName.INT64)
+        );
+        TableDefinition tableDefinition = StandardTableDefinition.of(schema);
+        TableId tableId = TableId.of(DATASET, TABLE);
+        bigquery.create(TableInfo.of(tableId, tableDefinition));
+
+        // Insert test data
+        InsertAllResponse response = bigquery.insertAll(InsertAllRequest.newBuilder(tableId)
+                .addRow("row1", Map.of("name", "Alice", "age", 30))
+                .addRow("row2", Map.of("name", "Bob", "age", 40))
+                .build());
+
+        if (response.hasErrors()) {
+            throw new RuntimeException("BigQuery insert failed: " + response.getInsertErrors());
+        }
+
+        // Wait for BigQuery to reflect changes
+        Thread.sleep(5000);
+    }
+
+    @Test
+    public void testBigQuerySqlQueryPipeline() {
+        Pipeline pipeline = Pipeline.create(PipelineOptionsFactory.create());
+
+        String sqlQuery = String.format("""
+            SELECT name, age
+            FROM `%s`
+            WHERE age > 25
+        """, FULL_TABLE_NAME);
+
+        PCollection<MyRow> result = pipeline
+            .apply("ReadFromBigQuery",
+                BigQueryIO.readTableRows()
+                    .fromQuery(sqlQuery)
+                    .usingStandardSql()
+                    .withMethod(BigQueryIO.TypedRead.Method.DIRECT_READ)
+                    .withoutValidation()
+            )
+            .apply("ToMyRow", MapElements.via(new SimpleFunction<TableRow, MyRow>() {
+                @Override
+                public MyRow apply(TableRow row) {
+                    String name = (String) row.get("name");
+                    long age = row.get("age") == null ? 0 : Long.parseLong(row.get("age").toString());
+                    return new MyRow(name, age);
+                }
+            }));
+
+        // Print to console for manual verification
+        result.apply("PrintRows", MapElements.via(new SimpleFunction<MyRow, Void>() {
+            @Override
+            public Void apply(MyRow row) {
+                System.out.println(row);
+                return null;
+            }
+        }));
+
+        pipeline.run().waitUntilFinish();
+
+        // Optional: You can also query BigQuery again directly to assert results
+        assertTrue(true);
+    }
+}
+
+
+

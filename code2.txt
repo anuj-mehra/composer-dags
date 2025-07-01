@@ -1,0 +1,41 @@
+import java.io.Serializable;
+import java.util.Objects;
+
+public class MyRow implements Serializable {
+    private String name;
+    private long age;
+
+    public MyRow() {}
+
+    public MyRow(String name, long age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public String getName() { return name; }
+
+    public void setName(String name) { this.name = name; }
+
+    public long getAge() { return age; }
+
+    public void setAge(long age) { this.age = age; }
+
+    @Override
+    public String toString() {
+        return "MyRow{name='" + name + "', age=" + age + "}";
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof MyRow)) return false;
+        MyRow myRow = (MyRow) o;
+        return age == myRow.age && Objects.equals(name, myRow.name);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name, age);
+    }
+}
+
