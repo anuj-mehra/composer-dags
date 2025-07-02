@@ -1,0 +1,59 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.values.PCollection;
+
+import java.util.List;
+
+public class JsonArrayFlattenerJob {
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create();
+
+        PCollection<String> jsonLines = pipeline.apply("ReadJSONFile", TextIO.read().from("input/pretty_array.json"));
+
+        jsonLines
+            .apply("FlattenArray", ParDo.of(new ParseJsonArrayFn()))
+            .apply("WriteCompactObjects", TextIO.write()
+                .to("output/flattened_objects.json")
+                .withNumShards(1)
+                .withSuffix(".json"));
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    static class ParseJsonArrayFn extends DoFn<String, String> {
+        private final ObjectMapper mapper = new ObjectMapper();
+        private final StringBuilder allLines = new StringBuilder();
+
+        @ProcessElement
+        public void processElement(@Element String line) {
+            allLines.append(line.trim());
+        }
+
+        @FinishBundle
+        public void finishBundle(FinishBundleContext context) throws Exception {
+            // At end of file, parse full content as array
+            String rawJson = allLines.toString();
+            if (!rawJson.startsWith("[")) {
+                throw new RuntimeException("Expected a JSON array at the root.");
+            }
+
+            JsonNode root = mapper.readTree(rawJson);
+            if (!root.isArray()) {
+                throw new RuntimeException("Root is not an array");
+            }
+
+            for (JsonNode obj : root) {
+                String compact = mapper.writeValueAsString(obj);
+                context.output(compact, org.joda.time.Instant.now(), org.apache.beam.sdk.io.DefaultCoder.PARAMETERLESS_GLOBAL_WINDOW);
+            }
+        }
+    }
+}
+
+
+
