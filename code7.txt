@@ -1,0 +1,65 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
+import org.apache.beam.sdk.values.PCollection;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ParseJsonArrayFromFile {
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create();
+
+        // Step 1: Read all lines from a multi-line JSON file
+        PCollection<String> lines = pipeline.apply("ReadFileLines", TextIO.read().from("input/your_json_array.json"));
+
+        // Step 2: Combine lines into one JSON string and emit each object in array
+        lines.apply("ExtractJsonObjects", ParDo.of(new JsonArrayExtractorFn()))
+             .apply("WriteCompactObjects", TextIO.write()
+                     .to("output/flat_json_objects")
+                     .withNumShards(1)
+                     .withSuffix(".json"));
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    static class JsonArrayExtractorFn extends DoFn<String, String> {
+        private final ObjectMapper mapper = new ObjectMapper();
+        private final List<String> buffer = new ArrayList<>();
+
+        @ProcessElement
+        public void processElement(@Element String line) {
+            if (line != null && !line.trim().isEmpty()) {
+                buffer.add(line.trim());
+            }
+        }
+
+        @FinishBundle
+        public void finishBundle(FinishBundleContext context) throws Exception {
+            String jsonContent = String.join("", buffer);
+
+            if (!jsonContent.startsWith("[")) {
+                throw new RuntimeException("Expected JSON array at root, but input doesn't start with [");
+            }
+
+            JsonNode root = mapper.readTree(jsonContent);
+
+            if (!root.isArray()) {
+                throw new RuntimeException("Expected JSON array but got: " + root.getNodeType());
+            }
+
+            for (JsonNode node : root) {
+                String compact = mapper.writeValueAsString(node);
+                context.output(compact, org.joda.time.Instant.now(), GlobalWindow.INSTANCE);
+            }
+        }
+    }
+}
+
+
+
