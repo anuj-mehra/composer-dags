@@ -1,0 +1,65 @@
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.values.TypeDescriptors;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class JsonFormatterJob {
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create();
+
+        pipeline
+            .apply("ReadLines", TextIO.read().from("input/formatted.json"))
+            .apply("GroupMultilineJSON", ParDo.of(new GroupMultilineJsonFn()))
+            .apply("WriteCompactJson", TextIO.write().to("output/compact_json.json").withNumShards(1).withSuffix(".json"));
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    // DoFn to group multi-line JSON into a single line
+    static class GroupMultilineJsonFn extends DoFn<String, String> {
+        private final ObjectMapper mapper = new ObjectMapper();
+        private final List<String> buffer = new ArrayList<>();
+        private int openBraces = 0;
+
+        @ProcessElement
+        public void processElement(@Element String line, OutputReceiver<String> out) throws Exception {
+            if (line.trim().isEmpty()) return;
+
+            int opens = countOccurrences(line, '{');
+            int closes = countOccurrences(line, '}');
+            openBraces += opens - closes;
+
+            buffer.add(line);
+
+            if (openBraces == 0 && !buffer.isEmpty()) {
+                String fullJson = String.join("", buffer);
+                Object jsonObject = mapper.readValue(fullJson, Object.class); // parse & validate
+                String compactJson = mapper.writeValueAsString(jsonObject);   // compact
+                out.output(compactJson);
+                buffer.clear();
+            }
+        }
+
+        private int countOccurrences(String line, char c) {
+            int count = 0;
+            for (char ch : line.toCharArray()) {
+                if (ch == c) count++;
+            }
+            return count;
+        }
+
+        @FinishBundle
+        public void finishBundle(FinishBundleContext context) {
+            buffer.clear(); // discard incomplete json if any
+            openBraces = 0;
+        }
+    }
+}
+
+
