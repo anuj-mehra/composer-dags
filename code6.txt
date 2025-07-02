@@ -1,0 +1,61 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
+import org.apache.beam.sdk.values.PCollection;
+import java.util.ArrayList;
+import java.util.List;
+
+public class GenericJsonArrayParser {
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create();
+
+        PCollection<String> lines = pipeline.apply("ReadJSONLines", TextIO.read().from("input/formatted.json"));
+
+        lines
+            .apply("ParseFullArray", ParDo.of(new JsonArraySplitterFn()))
+            .apply("WriteFlatJson", TextIO.write()
+                .to("output/flat_json")
+                .withNumShards(1)
+                .withSuffix(".json"));
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    static class JsonArraySplitterFn extends DoFn<String, String> {
+        private final List<String> linesBuffer = new ArrayList<>();
+        private final ObjectMapper mapper = new ObjectMapper();
+
+        @ProcessElement
+        public void processElement(@Element String line) {
+            linesBuffer.add(line);
+        }
+
+        @FinishBundle
+        public void finishBundle(FinishBundleContext context) throws Exception {
+            String jsonText = String.join("\n", linesBuffer).trim();
+
+            if (jsonText.isEmpty()) {
+                throw new RuntimeException("Input JSON is empty.");
+            }
+
+            JsonNode root = mapper.readTree(jsonText);
+
+            if (!root.isArray()) {
+                throw new RuntimeException("Expected top-level JSON array but got: " + root.getNodeType());
+            }
+
+            for (JsonNode element : root) {
+                String compact = mapper.writeValueAsString(element);
+                context.output(compact, org.joda.time.Instant.now(), GlobalWindow.INSTANCE);
+            }
+        }
+    }
+}
+
+
+
