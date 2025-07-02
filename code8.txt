@@ -1,0 +1,59 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.beam.sdk.Pipeline;
+import org.apache.beam.sdk.io.TextIO;
+import org.apache.beam.sdk.transforms.DoFn;
+import org.apache.beam.sdk.transforms.ParDo;
+import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
+import org.apache.beam.sdk.values.PCollection;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class CompactJsonArray {
+
+    public static void main(String[] args) {
+        Pipeline pipeline = Pipeline.create();
+
+        PCollection<String> lines = pipeline.apply("ReadInput", TextIO.read().from("input/input.json"));
+
+        lines
+            .apply("CompactArray", ParDo.of(new CompactJsonArrayFn()))
+            .apply("WriteCompact", TextIO.write()
+                .to("output/compact_array")
+                .withNumShards(1)
+                .withSuffix(".json"));
+
+        pipeline.run().waitUntilFinish();
+    }
+
+    static class CompactJsonArrayFn extends DoFn<String, String> {
+        private final ObjectMapper mapper = new ObjectMapper();
+        private final List<String> buffer = new ArrayList<>();
+
+        @ProcessElement
+        public void processElement(@Element String line) {
+            if (line != null && !line.trim().isEmpty()) {
+                buffer.add(line.trim());
+            }
+        }
+
+        @FinishBundle
+        public void finishBundle(FinishBundleContext context) throws Exception {
+            String jsonContent = String.join("", buffer).trim().replaceAll("^\uFEFF", "");
+
+            JsonNode root = mapper.readTree(jsonContent);
+
+            if (!root.isArray()) {
+                throw new RuntimeException("Expected a JSON array at root.");
+            }
+
+            // Just convert entire array into a compact single-line JSON string
+            String compactArray = mapper.writeValueAsString(root);
+            context.output(compactArray, org.joda.time.Instant.now(), GlobalWindow.INSTANCE);
+        }
+    }
+}
+
+
+
